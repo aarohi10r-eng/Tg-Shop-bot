@@ -6,6 +6,7 @@ import re
 import sqlite3
 import urllib.parse
 from io import BytesIO
+import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -26,10 +27,11 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "9272691697:AAHfFzOIzDlyQHKIqtn1LWtP8QX83Iggzu0")
 ADMIN_IDS = {6996401122, 8508701710}
 
-API_ID = int(os.getenv("API_ID", "39473866"))
-API_HASH = os.getenv("API_HASH", "a2a29ab4f0b7b2401f2d9cd2e51fa22e")
+# ✅ AAPKE SCREENSHOT (388_4.jpg) WALE EXACT API CREDENTIALS:
+API_ID = int(os.getenv("API_ID", "32922341"))
+API_HASH = os.getenv("API_HASH", "c22e8a72384629d148249a3e5")
 
-# ✅ AAPKI EXTRACT KI HUI SESSION STRING YAHAN SET HAI:
+# ✅ AAPKI SESSION STRING:
 SESSION_STRING = os.getenv(
     "SESSION_STRING",
     "1BVtsOK0Buxzut5dLRBWUVKPjQgTSsBYO5P4_TMy5JjdpB2ZX9ZMXaOASRiTw-4booSYCoIm5UiMsl4psrCSYDM1rbhdmsosaWSdYZWLlkd_xEV4mwPu3Vb3dFPxiGP-QKg1V-QvlO-1OskXCj8Y3Z-yI9qz6hG2U2xzSp8jLWFE1GjIWxJHYZ1I3UslM_22TvJlaVHJCDOyx8dFU2WqHn0Yuuk1wpids6PY2wisazwnekzdm-cFw4nPTA-OBqDRQdaXmGAtUTvwmHv6cJTWr0Bo4mXlj45N7tnj8jy85K_reIhJlpVC1BfpyVS6EYPMcgslBRM1I61OF3GW-e0TZKtDZ0zZagHo="
@@ -121,7 +123,7 @@ search_state = {}
 deposit_custom_state = set()
 pending_deposit_amt = {}
 
-# ==================== 5. 1.5X PRICE + USERNAME REPLACER & INTERVAL FORWARDER ====================
+# ==================== 5. 100% STEALTH SANITIZER & 1.5X PRICE REPLACER ====================
 def format_multiplied_price(val: float) -> str:
     new_val = round(val * PROFIT_MULTIPLIER, 2)
     return str(int(new_val)) if new_val.is_integer() else str(new_val)
@@ -155,19 +157,28 @@ def multiply_prices_in_text(text: str) -> str:
     )
     return text
 
-def clean_and_replace_text(text: str, multiply_price: bool = True) -> str:
+def sanitize_for_customer(text: str, multiply_price: bool = False) -> str:
+    """Kisi bhi haal mein @tgsshopprobot, TGSHOPLOGS ya purana username/link customer ko nahi dikhne dega"""
     if not text:
         return ""
     if multiply_price:
         text = multiply_prices_in_text(text)
-    text = re.sub(r'@tgsshopprobot', MY_BOT_USERNAME, text, flags=re.IGNORECASE)
+
+    # Hide any mention of source bot or logs channel (with or without @)
+    text = re.sub(r'@?tgsshopprobot', MY_BOT_USERNAME, text, flags=re.IGNORECASE)
+    text = re.sub(r'@?tgshopowner', MY_SUPPORT_USERNAME, text, flags=re.IGNORECASE)
+    text = re.sub(r'@?tgshoplogs', MY_BOT_USERNAME, text, flags=re.IGNORECASE)
+
+    # Replace any other @username with our bot username
     text = re.sub(r'@[A-Za-z0-9_]{3,}', MY_BOT_USERNAME, text)
+
+    # Replace any t.me link with our channel link
     text = re.sub(r'(https?://)?t\.me/[A-Za-z0-9_+]+', MY_CHANNEL_LINK, text)
     return text
 
 async def copy_and_replace_message(msg_obj):
     raw_text = msg_obj.raw_text or msg_obj.text or ""
-    modified_text = clean_and_replace_text(raw_text, multiply_price=True)
+    modified_text = sanitize_for_customer(raw_text, multiply_price=True)
 
     if msg_obj.media:
         caption_part = modified_text[:1020] if len(modified_text) > 1020 else modified_text
@@ -222,15 +233,16 @@ async def interval_multi_channel_forwarder():
 
 # ==================== 6. SAFE TELEGRAM SENDER ====================
 async def safe_edit_text(msg: types.Message, text: str, reply_markup=None):
+    clean_txt = sanitize_for_customer(text, multiply_price=False)
     for _ in range(3):
         try:
-            return await msg.edit_text(text, reply_markup=reply_markup, parse_mode=None)
+            return await msg.edit_text(clean_txt, reply_markup=reply_markup, parse_mode=None)
         except Exception as e:
             if "message is not modified" in str(e).lower():
                 return
             await asyncio.sleep(1)
     try:
-        return await bot.send_message(msg.chat.id, text, reply_markup=reply_markup, parse_mode=None)
+        return await bot.send_message(msg.chat.id, clean_txt, reply_markup=reply_markup, parse_mode=None)
     except Exception:
         pass
 
@@ -428,7 +440,7 @@ async def render_accounts_view(message_or_call, cat_key, r_key=None, custom_quer
         return
 
     raw_text = bot_msg.raw_text or bot_msg.text or "Available Accounts"
-    raw_text = multiply_prices_in_text(raw_text)
+    raw_text = sanitize_for_customer(raw_text, multiply_price=True)
     kb = InlineKeyboardBuilder()
 
     if bot_msg.buttons:
@@ -488,7 +500,7 @@ async def handle_pagination(call: types.CallbackQuery):
                         kb.button(text=b_text, callback_data=f"page_{msg.id}_{r_i}_{b_i}_{cat_key}")
             kb.button(text="⬅️ Back", callback_data=f"cat_{cat_key}")
             kb.adjust(1)
-            raw_t = multiply_prices_in_text(msg.raw_text or msg.text or "")
+            raw_t = sanitize_for_customer(msg.raw_text or msg.text or "", multiply_price=True)
             await safe_edit_text(call.message, raw_t, reply_markup=kb.as_markup())
     except Exception:
         await call.answer("⚠️ Page expired, please refresh.", show_alert=True)
@@ -506,7 +518,7 @@ async def prompt_search_country(call: types.CallbackQuery):
         reply_markup=kb.as_markup()
     )
 
-# ==================== 10. FAST & RELIABLE AUTO BUY ACCOUNT ====================
+# ==================== 10. STEALTH AUTO BUY ACCOUNT (SOURCE BOT HIDDEN) ====================
 @dp.callback_query(F.data.startswith("buybtn_"))
 async def buy_specific_account(call: types.CallbackQuery):
     _, msg_id_str, r_idx_str, b_idx_str, base_str, sell_str, cat_key = call.data.split("_")
@@ -520,11 +532,13 @@ async def buy_specific_account(call: types.CallbackQuery):
         return
 
     update_balance(user_id, -sell_price)
-    await safe_edit_text(call.message, "⏳ Purchasing account from panel... Please wait 5 seconds.")
+    await safe_edit_text(call.message, "⏳ Processing your order... Please wait 5 seconds.")
 
+    admin_secret_error = None
     try:
         source_msg = await userbot.get_messages(SOURCE_BOT, ids=int(msg_id_str))
         if not source_msg or not source_msg.buttons:
+            admin_secret_error = "Stock message expired."
             raise Exception("Stock page expired! Please click Refresh and try again.")
 
         await source_msg.click(int(r_idx_str), int(b_idx_str))
@@ -548,11 +562,14 @@ async def buy_specific_account(call: types.CallbackQuery):
                         text = (purchase_msg.raw_text or purchase_msg.text or "")
                         break
 
+        # ⚠️ STEALTH CHECK: Customer ko kabhi pata nahi chalega ki Admin wallet mein balance kam hai!
         if any(w in text.lower() for w in ["need ₹", "insufficient", "low balance", "add funds", "deposit"]):
-            raise Exception(f"Source Bot (@{SOURCE_BOT}) par aapke Admin Wallet mein balance kam hai!")
+            admin_secret_error = f"URGENT: Panel (@{SOURCE_BOT}) par aapke Admin Wallet mein balance kam hai! Customer (ID: {user_id}) ₹{sell_price} ka account kharidne ki koshish kar raha hai."
+            raise Exception("Server stock is currently refreshing. Please try again in a few minutes!")
 
         if "select a" in text.lower() and "phone" not in text.lower() and "#" not in text:
-            raise Exception("Account out of stock or button expired. Try again!")
+            admin_secret_error = "Account out of stock on panel."
+            raise Exception("This account was just sold out! Please click Refresh and select another one.")
 
         item_match = re.search(r"#(\d+)", text)
         phone_match = re.search(r"(\+\d{7,15})", text)
@@ -563,7 +580,7 @@ async def buy_specific_account(call: types.CallbackQuery):
         conn.commit()
 
         clean_text = re.sub(r"Charged:\s*₹\d+(\.\d+)?", f"Charged: ₹{sell_price}", text)
-        clean_text = clean_and_replace_text(clean_text, multiply_price=False)
+        clean_text = sanitize_for_customer(clean_text, multiply_price=False)
 
         kb = InlineKeyboardBuilder()
         kb.button(text="🔑 Get OTP", callback_data=f"otp_{item_id}")
@@ -593,9 +610,15 @@ async def buy_specific_account(call: types.CallbackQuery):
         kb.button(text="⬅️ Back", callback_data=f"cat_{cat_key}")
         await safe_edit_text(
             call.message,
-            f"⚠️ Purchase Failed!\nReason: {e}\n\n💰 ₹{sell_price} has been refunded to your wallet.",
+            f"⚠️ Order Could Not Be Completed!\nReason: {sanitize_for_customer(str(e))}\n\n💰 ₹{sell_price} has been refunded to your wallet.",
             reply_markup=kb.as_markup()
         )
+        if admin_secret_error:
+            for adm_id in ADMIN_IDS:
+                try:
+                    await bot.send_message(adm_id, f"🔔 [PRIVATE ADMIN ALERT]\n{admin_secret_error}")
+                except Exception:
+                    pass
 
 # ==================== 11. OTP, WALLET & QR DEPOSIT ====================
 @dp.callback_query(F.data.startswith("otp_"))
@@ -607,7 +630,7 @@ async def fetch_otp_code(call: types.CallbackQuery):
         await asyncio.sleep(2.0)
         latest = await userbot.get_messages(SOURCE_BOT, limit=1)
         otp_resp = await wait_for_edit_or_reply(latest[0], timeout=12)
-        resp_text = otp_resp.raw_text or otp_resp.text
+        resp_text = sanitize_for_customer(otp_resp.raw_text or otp_resp.text or "")
         await call.message.reply(f"📩 OTP Status (#{item_id}):\n\n{resp_text}", parse_mode=None)
     except Exception:
         await call.message.reply("⏳ Abhi OTP nahi aaya hai. 5 second baad firse try karein.")
@@ -621,7 +644,7 @@ async def logout_session_cb(call: types.CallbackQuery):
         await asyncio.sleep(2.0)
         latest = await userbot.get_messages(SOURCE_BOT, limit=1)
         resp = await wait_for_edit_or_reply(latest[0], timeout=10)
-        resp_text = resp.raw_text or resp.text
+        resp_text = sanitize_for_customer(resp.raw_text or resp.text or "")
         await call.message.reply(f"🚪 Session Status (#{item_id}):\n\n{resp_text}", parse_mode=None)
     except Exception:
         await call.message.reply("⚠️ Logout failed.")
@@ -837,9 +860,9 @@ async def admin_add_balance(msg: types.Message):
     except Exception:
         await msg.reply("❌ Usage: /addbal USER_ID AMOUNT")
 
-# ==================== 13. RENDER 24/7 WEB SERVER & MAIN RUNNER ====================
+# ==================== 13. RENDER 24/7 KEEP-ALIVE SERVER & SELF-PINGER ====================
 async def health_check(request):
-    return web.Response(text="✅ TG Shop Reseller Bot & Auto-Forwarder is Running 24/7!")
+    return web.Response(text="✅ TG Shop Store is Active 24/7!")
 
 async def start_web_server():
     app = web.Application()
@@ -851,11 +874,25 @@ async def start_web_server():
     await site.start()
     print(f"🌐 Render Web Server bound to port {port}")
 
-async def main():
-    # 1. Start Render Web Server
-    await start_web_server()
+async def keep_render_awake():
+    await asyncio.sleep(15)
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    port = int(os.environ.get("PORT", 10000))
+    target_url = render_url if render_url else f"http://127.0.0.1:{port}/"
 
-    # 2. Start Telethon UserBot via StringSession (No OTP needed on Render!)
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                async with session.get(target_url, timeout=10) as resp:
+                    print(f"💓 [KEEP-ALIVE PING] {target_url} -> Status {resp.status}")
+            except Exception as e:
+                print(f"⚠️ [KEEP-ALIVE PING ERROR]: {e}")
+            await asyncio.sleep(240)
+
+async def main():
+    await start_web_server()
+    asyncio.create_task(keep_render_awake())
+
     print("⏳ Connecting Telethon UserBot via StringSession...")
     await userbot.connect()
     if not await userbot.is_user_authorized():
@@ -865,16 +902,14 @@ async def main():
     ADMIN_IDS.add(ub_me.id)
     print(f"✅ Telethon Connected as: {ub_me.first_name} (ID: {ub_me.id})")
 
-    # 3. Start Auto-Replacer (1.5x Price) & Interval Forwarder
     await setup_auto_replacer()
     asyncio.create_task(interval_multi_channel_forwarder())
     print("✅ Auto-Replacer (1.5x -> @cjjg7) & Interval Forwarder Active!")
 
-    # 4. Start Aiogram Shop Bot
     await bot.delete_webhook(drop_pending_updates=True)
     bot_me = await bot.get_me()
     print(f"🚀 Shop Bot @{bot_me.username} is LIVE 24/7 on Render!")
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, handle_signals=False)
 
 if __name__ == "__main__":
     asyncio.run(main())
