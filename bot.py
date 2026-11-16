@@ -24,8 +24,8 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 # ==================== 1. MAIN CONFIGURATION ====================
-# ⚠️ Render ke 'Environment' tab mein BOT_TOKEN naam se apna naya revoked token daalein!
-BOT_TOKEN = os.getenv("BOT_TOKEN", "9272691697:AAFKeworc3AwA1mjANyuRfJBh7XgVKRDCrs")
+# Render ke Environment tab mein BOT_TOKEN daalein ya yahan quotes ke beech apna naya token likhein:
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9272691697:AAHfFzOIzDlyQHKIqtn1LWtP8QX83Iggzu0")
 ADMIN_IDS = {6996401122, 8508701710}
 
 API_ID = int(os.getenv("API_ID", "39473866"))
@@ -36,6 +36,7 @@ SESSION_STRING = os.getenv(
     "1BVtsOK0Buxzut5dLRBWUVKPjQgTSsBYO5P4_TMy5JjdpB2ZX9ZMXaOASRiTw-4booSYCoIm5UiMsl4psrCSYDM1rbhdmsosaWSdYZWLlkd_xEV4mwPu3Vb3dFPxiGP-QKg1V-QvlO-1OskXCj8Y3Z-yI9qz6hG2U2xzSp8jLWFE1GjIWxJHYZ1I3UslM_22TvJlaVHJCDOyx8dFU2WqHn0Yuuk1wpids6PY2wisazwnekzdm-cFw4nPTA-OBqDRQdaXmGAtUTvwmHv6cJTWr0Bo4mXlj45N7tnj8jy85K_reIhJlpVC1BfpyVS6EYPMcgslBRM1I61OF3GW-e0TZKtDZ0zZagHo="
 )
 
+# ✅ UPDATED: Ab yeh @CHEAPTGSBOT se bridge karega
 SOURCE_BOT = "CHEAPTGSBOT"
 PROFIT_MULTIPLIER = 1.5
 UPI_ID = "Paytm.s2b9rko@pty"
@@ -155,11 +156,13 @@ def multiply_prices_in_text(text: str) -> str:
     return text
 
 def sanitize_for_customer(text: str, multiply_price: bool = False) -> str:
+    """Kisi bhi haal mein @CHEAPTGSBOT, @tgsshopprobot ya purana username/link customer ko nahi dikhne dega"""
     if not text:
         return ""
     if multiply_price:
         text = multiply_prices_in_text(text)
 
+    text = re.sub(r'@?cheaptgsbot', MY_BOT_USERNAME, text, flags=re.IGNORECASE)
     text = re.sub(r'@?tgsshopprobot', MY_BOT_USERNAME, text, flags=re.IGNORECASE)
     text = re.sub(r'@?tgshopowner', MY_SUPPORT_USERNAME, text, flags=re.IGNORECASE)
     text = re.sub(r'@?tgshoplogs', MY_BOT_USERNAME, text, flags=re.IGNORECASE)
@@ -875,7 +878,6 @@ async def keep_render_awake_and_guard():
             try:
                 async with session.get(target_url, timeout=10) as resp:
                     print(f"💓 [KEEP-ALIVE PING] {target_url} -> Status {resp.status}")
-                # Anti-Hijack: Ensure no external webhook is attached to our bot
                 wh = await bot.get_webhook_info()
                 if wh.url:
                     print(f"⚠️ Removing unauthorized webhook: {wh.url}")
