@@ -26,7 +26,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 # ==================== 1. MAIN CONFIGURATION ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "9272691697:AAHfFzOIzDlyQHKIqtn1LWtP8QX83Iggzu0")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9117915556:AAHKQTjNxQM-PZOwXDxLrKeeFq1SA9DMTQQ")
 ADMIN_IDS = {6996401122, 8508701710}
 
 API_ID = int(os.getenv("API_ID", "33462002"))
