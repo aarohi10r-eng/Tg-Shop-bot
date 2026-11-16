@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 # ==================== 1. MAIN CONFIGURATION ====================
 # ⚠️ Render ke 'Environment' tab mein BOT_TOKEN naam se apna naya revoked token daalein!
-BOT_TOKEN = os.getenv("BOT_TOKEN", "PASTE_YOUR_NEW_REVOKED_BOT_TOKEN_HERE")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "9272691697:AAFKeworc3AwA1mjANyuRfJBh7XgVKRDCrs")
 ADMIN_IDS = {6996401122, 8508701710}
 
 API_ID = int(os.getenv("API_ID", "39473866"))
