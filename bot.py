@@ -24,14 +24,13 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 # ==================== 1. MAIN CONFIGURATION ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "9272691697:AAHfFzOIzDlyQHKIqtn1LWtP8QX83Iggzu0")
+# ⚠️ Render ke 'Environment' tab mein BOT_TOKEN naam se apna naya revoked token daalein!
+BOT_TOKEN = os.getenv("BOT_TOKEN", "PASTE_YOUR_NEW_REVOKED_BOT_TOKEN_HERE")
 ADMIN_IDS = {6996401122, 8508701710}
 
-# ✅ AAPKE SCREENSHOT (388_4.jpg) WALE EXACT API CREDENTIALS:
-API_ID = int(os.getenv("API_ID", "32922341"))
-API_HASH = os.getenv("API_HASH", "c22e8a72384629d148249a3e5")
+API_ID = int(os.getenv("API_ID", "39473866"))
+API_HASH = os.getenv("API_HASH", "a2a29ab4f0b7b2401f2d9cd2e51fa22e")
 
-# ✅ AAPKI SESSION STRING:
 SESSION_STRING = os.getenv(
     "SESSION_STRING",
     "1BVtsOK0Buxzut5dLRBWUVKPjQgTSsBYO5P4_TMy5JjdpB2ZX9ZMXaOASRiTw-4booSYCoIm5UiMsl4psrCSYDM1rbhdmsosaWSdYZWLlkd_xEV4mwPu3Vb3dFPxiGP-QKg1V-QvlO-1OskXCj8Y3Z-yI9qz6hG2U2xzSp8jLWFE1GjIWxJHYZ1I3UslM_22TvJlaVHJCDOyx8dFU2WqHn0Yuuk1wpids6PY2wisazwnekzdm-cFw4nPTA-OBqDRQdaXmGAtUTvwmHv6cJTWr0Bo4mXlj45N7tnj8jy85K_reIhJlpVC1BfpyVS6EYPMcgslBRM1I61OF3GW-e0TZKtDZ0zZagHo="
@@ -44,7 +43,6 @@ MERCHANT_NAME = "TG Store"
 SUPPORT_USERNAME = "@Tgshopssupport"
 
 # ==================== 2. FORWARDER & REPLACER CONFIG ====================
-# --- [FEATURE A] 1 Channel (jgitih) se Multiple Groups/Channels par Interval Forwarder ---
 ENABLE_INTERVAL_FORWARDER = True
 INTERVAL_SOURCE_CHANNEL = "jgitih"
 INTERVAL_MESSAGE_ID = 2
@@ -56,7 +54,6 @@ INTERVAL_TARGET_CHANNELS = [
 ]
 REPEAT_INTERVAL_MINUTES = 30
 
-# --- [FEATURE B] TGSHOPLOGS se 1.5x Price + Username Edit karke Apne Channel (cjjg7) mein Bhejna ---
 ENABLE_AUTO_REPLACER = True
 REPLACER_SOURCE_CHANNELS = [
     "TGSHOPLOGS",
@@ -97,7 +94,7 @@ def update_balance(user_id, amount):
     conn.commit()
 
 # ==================== 4. INITIALIZE CLIENTS ====================
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN.strip())
 dp = Dispatcher()
 userbot = TelegramClient(StringSession(SESSION_STRING.strip()), API_ID, API_HASH)
 
@@ -158,21 +155,15 @@ def multiply_prices_in_text(text: str) -> str:
     return text
 
 def sanitize_for_customer(text: str, multiply_price: bool = False) -> str:
-    """Kisi bhi haal mein @tgsshopprobot, TGSHOPLOGS ya purana username/link customer ko nahi dikhne dega"""
     if not text:
         return ""
     if multiply_price:
         text = multiply_prices_in_text(text)
 
-    # Hide any mention of source bot or logs channel (with or without @)
     text = re.sub(r'@?tgsshopprobot', MY_BOT_USERNAME, text, flags=re.IGNORECASE)
     text = re.sub(r'@?tgshopowner', MY_SUPPORT_USERNAME, text, flags=re.IGNORECASE)
     text = re.sub(r'@?tgshoplogs', MY_BOT_USERNAME, text, flags=re.IGNORECASE)
-
-    # Replace any other @username with our bot username
     text = re.sub(r'@[A-Za-z0-9_]{3,}', MY_BOT_USERNAME, text)
-
-    # Replace any t.me link with our channel link
     text = re.sub(r'(https?://)?t\.me/[A-Za-z0-9_+]+', MY_CHANNEL_LINK, text)
     return text
 
@@ -518,7 +509,7 @@ async def prompt_search_country(call: types.CallbackQuery):
         reply_markup=kb.as_markup()
     )
 
-# ==================== 10. STEALTH AUTO BUY ACCOUNT (SOURCE BOT HIDDEN) ====================
+# ==================== 10. STEALTH AUTO BUY ACCOUNT ====================
 @dp.callback_query(F.data.startswith("buybtn_"))
 async def buy_specific_account(call: types.CallbackQuery):
     _, msg_id_str, r_idx_str, b_idx_str, base_str, sell_str, cat_key = call.data.split("_")
@@ -562,7 +553,6 @@ async def buy_specific_account(call: types.CallbackQuery):
                         text = (purchase_msg.raw_text or purchase_msg.text or "")
                         break
 
-        # ⚠️ STEALTH CHECK: Customer ko kabhi pata nahi chalega ki Admin wallet mein balance kam hai!
         if any(w in text.lower() for w in ["need ₹", "insufficient", "low balance", "add funds", "deposit"]):
             admin_secret_error = f"URGENT: Panel (@{SOURCE_BOT}) par aapke Admin Wallet mein balance kam hai! Customer (ID: {user_id}) ₹{sell_price} ka account kharidne ki koshish kar raha hai."
             raise Exception("Server stock is currently refreshing. Please try again in a few minutes!")
@@ -860,7 +850,7 @@ async def admin_add_balance(msg: types.Message):
     except Exception:
         await msg.reply("❌ Usage: /addbal USER_ID AMOUNT")
 
-# ==================== 13. RENDER 24/7 KEEP-ALIVE SERVER & SELF-PINGER ====================
+# ==================== 13. RENDER 24/7 KEEP-ALIVE & ANTI-HIJACK GUARD ====================
 async def health_check(request):
     return web.Response(text="✅ TG Shop Store is Active 24/7!")
 
@@ -874,7 +864,7 @@ async def start_web_server():
     await site.start()
     print(f"🌐 Render Web Server bound to port {port}")
 
-async def keep_render_awake():
+async def keep_render_awake_and_guard():
     await asyncio.sleep(15)
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
     port = int(os.environ.get("PORT", 10000))
@@ -885,13 +875,18 @@ async def keep_render_awake():
             try:
                 async with session.get(target_url, timeout=10) as resp:
                     print(f"💓 [KEEP-ALIVE PING] {target_url} -> Status {resp.status}")
+                # Anti-Hijack: Ensure no external webhook is attached to our bot
+                wh = await bot.get_webhook_info()
+                if wh.url:
+                    print(f"⚠️ Removing unauthorized webhook: {wh.url}")
+                    await bot.delete_webhook(drop_pending_updates=False)
             except Exception as e:
                 print(f"⚠️ [KEEP-ALIVE PING ERROR]: {e}")
-            await asyncio.sleep(240)
+            await asyncio.sleep(180)
 
 async def main():
     await start_web_server()
-    asyncio.create_task(keep_render_awake())
+    asyncio.create_task(keep_render_awake_and_guard())
 
     print("⏳ Connecting Telethon UserBot via StringSession...")
     await userbot.connect()
