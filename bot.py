@@ -26,21 +26,17 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 # ==================== 1. MAIN CONFIGURATION ====================
-# Render ke Environment tab mein apna naya BOT_TOKEN daalein ya yahan replace karein:
 BOT_TOKEN = os.getenv("BOT_TOKEN", "9272691697:AAHfFzOIzDlyQHKIqtn1LWtP8QX83Iggzu0")
 ADMIN_IDS = {6996401122, 8508701710}
 
-# ✅ UPDATED: Naye Account (LYIHU) ke 100% Valid API Credentials (Screenshot 440.jpg se)
 API_ID = int(os.getenv("API_ID", "33462002"))
 API_HASH = os.getenv("API_HASH", "c684a0e32627cabb231a8860c454834d")
 
-# ✅ UPDATED: Naye Account (+917409609255 - LYIHU) ki Nayi SESSION_STRING
 SESSION_STRING = os.getenv(
     "SESSION_STRING",
     "1BVtsOGUBu8D-Zl9XZw_gmKq_gBAtv0sE65Z7bEsun1lD1Pbt0Je94QNEE_36ZqfNlObAJNMIpy-ODLisjNYyTBHTwefhvuu0dfgdLRX72zgvOYxsggXeFTNHnb3DamNph05LVx_V2dimQA3KCqSGO-CnUKvPhSg5kmbiJnEpxawoLolpaDFuh1b-Uoyov0Y1T7Iq6-AS1eYjd1nssjd8M1n65_JI5sGpJ-e6wRQj8raVmaNL6ZlcnmYdf2Rf25qf4v6rftcJMzSGKeAdl2h6Q5ltBwApfPNLERQa4Jeu4RqNMRZRdZQ4shGOEFGudXB2TYecoQuSmvClYX3Bj1wAP_n6YF8rPyA="
 )
 
-# Source Bot: Aap isko "tgsshopprobot" ya "CHEAPTGSBOT" dono mein se kuch bhi rakh sakte hain
 SOURCE_BOT = os.getenv("SOURCE_BOT", "tgsshopprobot")
 PROFIT_MULTIPLIER = 1.5
 UPI_ID = "Paytm.s2b9rko@pty"
@@ -48,7 +44,6 @@ MERCHANT_NAME = "TG Store"
 SUPPORT_USERNAME = "@Tgshopssupport"
 
 # ==================== 2. FORWARDER & REPLACER CONFIG ====================
-# --- [FEATURE A] 1 Channel (jgitih) se Multiple Groups/Channels par Interval Forwarder ---
 ENABLE_INTERVAL_FORWARDER = True
 INTERVAL_SOURCE_CHANNEL = "jgitih"
 INTERVAL_MESSAGE_ID = 2
@@ -60,7 +55,6 @@ INTERVAL_TARGET_CHANNELS = [
 ]
 REPEAT_INTERVAL_MINUTES = 30
 
-# --- [FEATURE B] TGSHOPLOGS se 1.5x Price + Username Edit karke Apne Channel (cjjg7) mein Bhejna ---
 ENABLE_AUTO_REPLACER = True
 REPLACER_SOURCE_CHANNELS = [
     "TGSHOPLOGS",
@@ -100,12 +94,11 @@ def update_balance(user_id, amount):
     c.execute("UPDATE users SET balance=? WHERE user_id=?", (round(bal + amount, 2), user_id))
     conn.commit()
 
-# ==================== 4. INITIALIZE CLIENTS & ANTI-BAN CACHE ====================
+# ==================== 4. INITIALIZE CLIENTS & CACHE ====================
 bot = Bot(token=BOT_TOKEN.strip())
 dp = Dispatcher()
 userbot = TelegramClient(StringSession(SESSION_STRING.strip()), API_ID, API_HASH)
 
-# 🛡️ ANTI-BAN LOCK & STOCK CACHE (2 minute tak stock memory mein save rakhega taaki ban na lage)
 panel_lock = asyncio.Lock()
 stock_cache = {}
 CACHE_TTL_SECONDS = 120
@@ -167,7 +160,6 @@ def multiply_prices_in_text(text: str) -> str:
     return text
 
 def sanitize_for_customer(text: str, multiply_price: bool = False) -> str:
-    """Customer ko kabhi bhi @tgsshopprobot, @CHEAPTGSBOT ya TGSHOPLOGS nahi dikhne dega"""
     if not text:
         return ""
     if multiply_price:
@@ -272,17 +264,17 @@ def generate_upi_qr_photo(amount: float = 0):
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&margin=15&data={encoded_data}"
         return URLInputFile(qr_url, filename="upi_qr.png")
 
-# ==================== 8. ANTI-BAN TELETHON SHOP BRIDGE HELPERS ====================
+# ==================== 8. ROBUST TELETHON SHOP BRIDGE HELPERS ====================
 async def human_delay(min_s=2.0, max_s=3.5):
     await asyncio.sleep(random.uniform(min_s, max_s))
 
-async def wait_for_edit_or_reply(msg, timeout=16):
-    steps = int(timeout / 1.6)
+async def wait_for_edit_or_reply(msg, timeout=25):
+    steps = int(timeout / 1.5)
     current = msg
     for _ in range(steps):
         txt = (current.raw_text or current.text or "").lower()
         if any(w in txt for w in ["fetching", "please wait", "loading", "checking", "sending"]):
-            await asyncio.sleep(1.6)
+            await asyncio.sleep(1.5)
             refreshed = await userbot.get_messages(SOURCE_BOT, ids=current.id)
             if refreshed:
                 current = refreshed
@@ -299,13 +291,13 @@ async def click_button_by_substring(msg, substr):
     for r_idx, row in enumerate(msg.buttons):
         for b_idx, btn in enumerate(row):
             if substr.lower() in btn.text.lower():
-                await human_delay(1.8, 3.0)
+                await human_delay(1.5, 2.5)
                 await msg.click(r_idx, b_idx)
-                await asyncio.sleep(1.8)
+                await asyncio.sleep(2.0)
                 refreshed = await userbot.get_messages(SOURCE_BOT, ids=msg.id)
                 latest = await userbot.get_messages(SOURCE_BOT, limit=1)
                 target = latest[0] if (latest and latest[0].id > msg.id) else refreshed
-                return await wait_for_edit_or_reply(target, timeout=16)
+                return await wait_for_edit_or_reply(target, timeout=25)
     return None
 
 async def navigate_to_accounts(cat_key, region_name=None, custom_query=None, force_refresh=False):
@@ -321,7 +313,7 @@ async def navigate_to_accounts(cat_key, region_name=None, custom_query=None, for
 
     async with panel_lock:
         await userbot.send_message(SOURCE_BOT, "/start")
-        await human_delay(2.0, 3.2)
+        await human_delay(2.5, 3.5)
         latest = await userbot.get_messages(SOURCE_BOT, limit=1)
         if not latest:
             return None
@@ -342,9 +334,9 @@ async def navigate_to_accounts(cat_key, region_name=None, custom_query=None, for
                 return None
             await human_delay(1.5, 2.5)
             await userbot.send_message(SOURCE_BOT, custom_query)
-            await asyncio.sleep(2.2)
+            await asyncio.sleep(2.5)
             latest = await userbot.get_messages(SOURCE_BOT, limit=1)
-            msg = await wait_for_edit_or_reply(latest[0], timeout=16)
+            msg = await wait_for_edit_or_reply(latest[0], timeout=25)
         else:
             msg = await click_button_by_substring(msg, region_name)
 
@@ -448,9 +440,9 @@ async def show_regions_menu(call: types.CallbackQuery):
 async def render_accounts_view(message_or_call, cat_key, r_key=None, custom_query=None, is_msg=False, force_refresh=False):
     target_msg = message_or_call if is_msg else message_or_call.message
     if is_msg:
-        wait_msg = await target_msg.answer("⏳ Fetching accounts... Please wait (5-8s).")
+        wait_msg = await target_msg.answer("⏳ Fetching accounts... Please wait.")
     else:
-        await safe_edit_text(target_msg, "⏳ Fetching accounts... Please wait (5-8s).")
+        await safe_edit_text(target_msg, "⏳ Fetching accounts... Please wait.")
         wait_msg = target_msg
 
     region_name = REGIONS[r_key][1] if r_key else None
@@ -506,9 +498,9 @@ async def handle_pagination(call: types.CallbackQuery):
             if msg and msg.buttons:
                 await human_delay(1.5, 2.5)
                 await msg.click(int(r_idx_str), int(b_idx_str))
-                await asyncio.sleep(1.8)
+                await asyncio.sleep(2.0)
                 msg = await userbot.get_messages(SOURCE_BOT, ids=int(msg_id_str))
-                msg = await wait_for_edit_or_reply(msg, timeout=14)
+                msg = await wait_for_edit_or_reply(msg, timeout=25)
 
                 kb = InlineKeyboardBuilder()
                 for r_i, row in enumerate(msg.buttons or []):
@@ -559,7 +551,7 @@ async def buy_specific_account(call: types.CallbackQuery):
         return
 
     update_balance(user_id, -sell_price)
-    await safe_edit_text(call.message, "⏳ Processing your order... Please wait 5-8 seconds.")
+    await safe_edit_text(call.message, "⏳ Processing your order... Please wait.")
 
     admin_secret_error = None
     try:
@@ -571,12 +563,12 @@ async def buy_specific_account(call: types.CallbackQuery):
 
             await human_delay(1.5, 2.5)
             await source_msg.click(int(r_idx_str), int(b_idx_str))
-            await asyncio.sleep(2.2)
+            await asyncio.sleep(2.5)
 
             refreshed = await userbot.get_messages(SOURCE_BOT, ids=int(msg_id_str))
             latest = await userbot.get_messages(SOURCE_BOT, limit=1)
             purchase_msg = latest[0] if (latest and latest[0].id > int(msg_id_str)) else refreshed
-            purchase_msg = await wait_for_edit_or_reply(purchase_msg, timeout=15)
+            purchase_msg = await wait_for_edit_or_reply(purchase_msg, timeout=25)
 
             text = (purchase_msg.raw_text or purchase_msg.text or "")
 
@@ -586,9 +578,9 @@ async def buy_specific_account(call: types.CallbackQuery):
                         if any(w in btn.text.lower() for w in ["confirm", "yes", "buy now", "proceed"]):
                             await human_delay(1.2, 2.0)
                             await purchase_msg.click(r_i, b_i)
-                            await asyncio.sleep(2.2)
+                            await asyncio.sleep(2.5)
                             latest2 = await userbot.get_messages(SOURCE_BOT, limit=1)
-                            purchase_msg = await wait_for_edit_or_reply(latest2[0], timeout=14)
+                            purchase_msg = await wait_for_edit_or_reply(latest2[0], timeout=25)
                             text = (purchase_msg.raw_text or purchase_msg.text or "")
                             break
 
@@ -658,9 +650,9 @@ async def fetch_otp_code(call: types.CallbackQuery):
         async with panel_lock:
             await human_delay(1.0, 2.0)
             await userbot.send_message(SOURCE_BOT, f"/otp {item_id}")
-            await asyncio.sleep(2.2)
+            await asyncio.sleep(2.5)
             latest = await userbot.get_messages(SOURCE_BOT, limit=1)
-            otp_resp = await wait_for_edit_or_reply(latest[0], timeout=14)
+            otp_resp = await wait_for_edit_or_reply(latest[0], timeout=25)
             resp_text = sanitize_for_customer(otp_resp.raw_text or otp_resp.text or "")
             await call.message.reply(f"📩 OTP Status (#{item_id}):\n\n{resp_text}", parse_mode=None)
     except Exception:
@@ -674,9 +666,9 @@ async def logout_session_cb(call: types.CallbackQuery):
         async with panel_lock:
             await human_delay(1.0, 2.0)
             await userbot.send_message(SOURCE_BOT, f"/logout {item_id}")
-            await asyncio.sleep(2.2)
+            await asyncio.sleep(2.5)
             latest = await userbot.get_messages(SOURCE_BOT, limit=1)
-            resp = await wait_for_edit_or_reply(latest[0], timeout=12)
+            resp = await wait_for_edit_or_reply(latest[0], timeout=25)
             resp_text = sanitize_for_customer(resp.raw_text or resp.text or "")
             await call.message.reply(f"🚪 Session Status (#{item_id}):\n\n{resp_text}", parse_mode=None)
     except Exception:
