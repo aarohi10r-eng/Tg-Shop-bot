@@ -43,6 +43,10 @@ UPI_ID = "Paytm.s2b9rko@pty"
 MERCHANT_NAME = "TG Store"
 SUPPORT_USERNAME = "@Tgshopssupport"
 
+# Force-Join Channel on /start (Bot must be Admin in this channel)
+FORCE_JOIN_CHANNEL = os.getenv("FORCE_JOIN_CHANNEL", "@cjjg7")
+FORCE_JOIN_URL = f"https://t.me/{FORCE_JOIN_CHANNEL.lstrip('@')}"
+
 # ==================== 2. FORWARDER & REPLACER CONFIG ====================
 ENABLE_INTERVAL_FORWARDER = True
 INTERVAL_SOURCE_CHANNEL = "jgitih"
@@ -80,7 +84,7 @@ c.execute("""CREATE TABLE IF NOT EXISTS orders (
 )""")
 conn.commit()
 
-def get_balance(user_id):
+def ensure_user(user_id):
     c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
     row = c.fetchone()
     if not row:
@@ -89,10 +93,17 @@ def get_balance(user_id):
         return 0.0
     return round(row[0], 2)
 
+def get_balance(user_id):
+    return ensure_user(user_id)
+
 def update_balance(user_id, amount):
     bal = get_balance(user_id)
     c.execute("UPDATE users SET balance=? WHERE user_id=?", (round(bal + amount, 2), user_id))
     conn.commit()
+
+def get_all_user_ids():
+    c.execute("SELECT user_id FROM users")
+    return [r[0] for r in c.fetchall()]
 
 # ==================== 4. INITIALIZE CLIENTS & CACHE ====================
 bot = Bot(token=BOT_TOKEN.strip())
@@ -104,11 +115,11 @@ stock_cache = {}
 CACHE_TTL_SECONDS = 120
 
 CATEGORIES = {
-    "c1": ("✅ Cheap + Mail", "Cheap + Mail"),
-    "c2": ("🚫 Cheap No Mail", "Cheap No Mail"),
-    "c3": ("⭐📧 Good + Mail", "Good + Mail"),
-    "c4": ("⭐🚫 Good No Mail", "Good No Mail"),
-    "c5": ("🗑️ Use and Throw", "Use and Throw"),
+    "c1": ("🟢 Cheap + Mail", "Cheap + Mail"),
+    "c2": ("🔴 Cheap No Mail", "Cheap No Mail"),
+    "c3": ("🟡 Good + Mail", "Good + Mail"),
+    "c4": ("🟠 Good No Mail", "Good No Mail"),
+    "c5": ("🟣 Use and Throw", "Use and Throw"),
 }
 
 REGIONS = {
@@ -125,7 +136,54 @@ search_state = {}
 deposit_custom_state = set()
 pending_deposit_amt = {}
 
-# ==================== 5. 100% STEALTH SANITIZER & 1.5X PRICE REPLACER ====================
+# ==================== 5. FORCE-JOIN CHECK HELPER ====================
+async def is_user_joined(user_id: int) -> bool:
+    if not FORCE_JOIN_CHANNEL:
+        return True
+    if user_id in ADMIN_IDS:
+        return True
+    try:
+        member = await bot.get_chat_member(chat_id=FORCE_JOIN_CHANNEL, user_id=user_id)
+        return member.status in ("member", "administrator", "creator")
+    except Exception as e:
+        logging.warning(f"[FORCE JOIN CHECK WARN]: {e}")
+        return True
+
+def get_force_join_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text=f"📢 Join {FORCE_JOIN_CHANNEL}", url=FORCE_JOIN_URL)
+    kb.button(text="🟢 I Have Joined", callback_data="check_joined")
+    kb.adjust(1, 1)
+    return kb.as_markup()
+
+async def prompt_force_join_msg(msg: types.Message):
+    await msg.answer(
+        f"🔒 Channel Access Required\n\n"
+        f"Bot use karne ke liye pehle humara official channel join karein:\n"
+        f"👉 {FORCE_JOIN_CHANNEL}\n\n"
+        f"Join karne ke baad '🟢 I Have Joined' dabayein.",
+        reply_markup=get_force_join_kb(),
+        parse_mode=None
+    )
+
+async def prompt_force_join_call(call: types.CallbackQuery):
+    try:
+        await call.message.edit_text(
+            f"🔒 Channel Access Required\n\n"
+            f"Bot use karne ke liye pehle humara official channel join karein:\n"
+            f"👉 {FORCE_JOIN_CHANNEL}\n\n"
+            f"Join karne ke baad '🟢 I Have Joined' dabayein.",
+            reply_markup=get_force_join_kb(),
+            parse_mode=None
+        )
+    except Exception:
+        await call.message.answer(
+            f"🔒 Join {FORCE_JOIN_CHANNEL} first to continue.",
+            reply_markup=get_force_join_kb(),
+            parse_mode=None
+        )
+
+# ==================== 6. 100% STEALTH SANITIZER & 1.5X PRICE REPLACER ====================
 def format_multiplied_price(val: float) -> str:
     new_val = round(val * PROFIT_MULTIPLIER, 2)
     return str(int(new_val)) if new_val.is_integer() else str(new_val)
@@ -189,6 +247,8 @@ async def setup_auto_replacer():
     if not ENABLE_AUTO_REPLACER or not REPLACER_SOURCE_CHANNELS:
         return
 
+    await userbot.get_dialogs(limit=100)
+
     @userbot.on(events.NewMessage(chats=REPLACER_SOURCE_CHANNELS))
     async def replacer_handler(event):
         try:
@@ -228,7 +288,7 @@ async def interval_multi_channel_forwarder():
 
         await asyncio.sleep(REPEAT_INTERVAL_MINUTES * 60)
 
-# ==================== 6. SAFE TELEGRAM SENDER ====================
+# ==================== 7. SAFE TELEGRAM SENDER ====================
 async def safe_edit_text(msg: types.Message, text: str, reply_markup=None):
     clean_txt = sanitize_for_customer(text, multiply_price=False)
     for _ in range(3):
@@ -243,7 +303,7 @@ async def safe_edit_text(msg: types.Message, text: str, reply_markup=None):
     except Exception:
         pass
 
-# ==================== 7. QR CODE GENERATOR ====================
+# ==================== 8. QR CODE GENERATOR ====================
 def generate_upi_qr_photo(amount: float = 0):
     if amount > 0:
         upi_link = f"upi://pay?pa={UPI_ID}&pn={urllib.parse.quote(MERCHANT_NAME)}&am={amount}&cu=INR"
@@ -264,7 +324,7 @@ def generate_upi_qr_photo(amount: float = 0):
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&margin=15&data={encoded_data}"
         return URLInputFile(qr_url, filename="upi_qr.png")
 
-# ==================== 8. ROBUST TELETHON SHOP BRIDGE HELPERS ====================
+# ==================== 9. ROBUST TELETHON SHOP BRIDGE HELPERS ====================
 async def human_delay(min_s=2.0, max_s=3.5):
     await asyncio.sleep(random.uniform(min_s, max_s))
 
@@ -344,21 +404,21 @@ async def navigate_to_accounts(cat_key, region_name=None, custom_query=None, for
             stock_cache[cache_key] = (time.time(), msg.id)
         return msg
 
-# ==================== 9. SHOP BOT MENUS ====================
+# ==================== 10. COLOURFUL SHOP BOT MENUS ====================
 def get_main_menu_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="📱 Telegram Accounts", callback_data="menu_tg_acc")
-    kb.button(text="💰 My Wallet", callback_data="my_wallet")
-    kb.button(text="➕ Deposit", callback_data="deposit")
-    kb.button(text="📦 My Orders", callback_data="my_orders")
-    kb.button(text="🆘 Support", callback_data="support")
+    kb.button(text="🟦 Telegram Accounts", callback_data="menu_tg_acc")
+    kb.button(text="🟩 My Wallet", callback_data="my_wallet")
+    kb.button(text="🟨 Deposit QR", callback_data="deposit")
+    kb.button(text="🟪 My Orders", callback_data="my_orders")
+    kb.button(text="🔵 Support", callback_data="support")
     kb.adjust(1, 2, 1, 1)
     return kb.as_markup()
 
 def get_welcome_text(user_name, bal):
     return (
         f"Hi {user_name},\n\n"
-        f"🔰 Welcome to STORE\n"
+        f"🔰 Welcome to TG STORE\n"
         f"Live Telegram accounts with instant delivery.\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💰 Your Wallet: ₹{bal}\n"
@@ -373,18 +433,92 @@ async def start_cmd(msg: types.Message):
     search_state.pop(msg.from_user.id, None)
     deposit_custom_state.discard(msg.from_user.id)
     bal = get_balance(msg.from_user.id)
+
+    if not await is_user_joined(msg.from_user.id):
+        await prompt_force_join_msg(msg)
+        return
+
     await msg.answer(
         get_welcome_text(msg.from_user.first_name, bal),
-        reply_markup=get_main_menu_kb()
+        reply_markup=get_main_menu_kb(),
+        parse_mode=None
     )
+
+@dp.callback_query(F.data == "check_joined")
+async def check_joined_cb(call: types.CallbackQuery):
+    if await is_user_joined(call.from_user.id):
+        bal = get_balance(call.from_user.id)
+        await call.answer("✅ Channel verified!")
+        await safe_edit_text(
+            call.message,
+            get_welcome_text(call.from_user.first_name, bal),
+            reply_markup=get_main_menu_kb()
+        )
+    else:
+        await call.answer("❌ Pehle channel join karein!", show_alert=True)
 
 @dp.message(Command("admin"))
 async def register_admin_cmd(msg: types.Message):
     ADMIN_IDS.add(msg.from_user.id)
-    await msg.reply(f"✅ Aapka ID ({msg.from_user.id}) Admin list mein jud gaya hai!")
+    await msg.reply(f"✅ Aapka ID ({msg.from_user.id}) Admin list mein jud gaya hai!", parse_mode=None)
+
+# ==================== 11. ADMIN BROADCAST COMMAND ====================
+@dp.message(Command("broadcast"))
+async def admin_broadcast_cmd(msg: types.Message):
+    if msg.from_user.id not in ADMIN_IDS:
+        return
+
+    all_uids = get_all_user_ids()
+    if not all_uids:
+        await msg.reply("⚠️ Database mein koi user nahi mila.", parse_mode=None)
+        return
+
+    parts = (msg.text or "").split(maxsplit=1)
+    broadcast_text = parts[1].strip() if len(parts) > 1 else ""
+    reply_msg = msg.reply_to_message
+
+    if not broadcast_text and not reply_msg:
+        await msg.reply(
+            "📢 Broadcast Usage:\n"
+            "• /broadcast Aapka message yahan\n"
+            "• Ya kisi photo/message ko reply karke /broadcast likhein.",
+            parse_mode=None
+        )
+        return
+
+    status_msg = await msg.reply(f"📤 Broadcasting to {len(all_uids)} users...", parse_mode=None)
+    sent_count = 0
+    failed_count = 0
+
+    for uid in all_uids:
+        try:
+            if reply_msg:
+                await bot.copy_message(
+                    chat_id=uid,
+                    from_chat_id=reply_msg.chat.id,
+                    message_id=reply_msg.message_id,
+                    caption=broadcast_text if broadcast_text else reply_msg.caption,
+                    parse_mode=None
+                )
+            else:
+                await bot.send_message(chat_id=uid, text=broadcast_text, parse_mode=None)
+            sent_count += 1
+            await asyncio.sleep(0.08)
+        except Exception:
+            failed_count += 1
+
+    await status_msg.edit_text(
+        f"✅ Broadcast Complete!\n"
+        f"🟢 Sent: {sent_count}\n"
+        f"🔴 Failed/Blocked: {failed_count}",
+        parse_mode=None
+    )
 
 @dp.callback_query(F.data == "back_home")
 async def back_home_cb(call: types.CallbackQuery):
+    if not await is_user_joined(call.from_user.id):
+        await prompt_force_join_call(call)
+        return
     search_state.pop(call.from_user.id, None)
     deposit_custom_state.discard(call.from_user.id)
     bal = get_balance(call.from_user.id)
@@ -392,7 +526,8 @@ async def back_home_cb(call: types.CallbackQuery):
         await call.message.delete()
         await call.message.answer(
             get_welcome_text(call.from_user.first_name, bal),
-            reply_markup=get_main_menu_kb()
+            reply_markup=get_main_menu_kb(),
+            parse_mode=None
         )
     else:
         await safe_edit_text(
@@ -403,13 +538,16 @@ async def back_home_cb(call: types.CallbackQuery):
 
 @dp.callback_query(F.data == "menu_tg_acc")
 async def show_categories_menu(call: types.CallbackQuery):
+    if not await is_user_joined(call.from_user.id):
+        await prompt_force_join_call(call)
+        return
     search_state.pop(call.from_user.id, None)
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Cheap + Mail", callback_data="cat_c1")
-    kb.button(text="🚫 Cheap No Mail", callback_data="cat_c2")
-    kb.button(text="⭐📧 Good + Mail", callback_data="cat_c3")
-    kb.button(text="⭐🚫 Good No Mail", callback_data="cat_c4")
-    kb.button(text="🗑️ Use and Throw", callback_data="cat_c5")
+    kb.button(text="🟢 Cheap + Mail", callback_data="cat_c1")
+    kb.button(text="🔴 Cheap No Mail", callback_data="cat_c2")
+    kb.button(text="🟡 Good + Mail", callback_data="cat_c3")
+    kb.button(text="🟠 Good No Mail", callback_data="cat_c4")
+    kb.button(text="🟣 Use and Throw", callback_data="cat_c5")
     kb.button(text="⬅️ Back", callback_data="back_home")
     kb.adjust(2, 2, 1, 1)
 
@@ -421,13 +559,16 @@ async def show_categories_menu(call: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("cat_"))
 async def show_regions_menu(call: types.CallbackQuery):
+    if not await is_user_joined(call.from_user.id):
+        await prompt_force_join_call(call)
+        return
     cat_key = call.data.split("_")[1]
     cat_title, _ = CATEGORIES[cat_key]
 
     kb = InlineKeyboardBuilder()
     for r_key, (r_label, _) in REGIONS.items():
         kb.button(text=r_label, callback_data=f"reg_{cat_key}_{r_key}_0")
-    kb.button(text="🔍 Search Country", callback_data=f"search_{cat_key}")
+    kb.button(text="🔵 Search Country", callback_data=f"search_{cat_key}")
     kb.button(text="⬅️ Back", callback_data="menu_tg_acc")
     kb.adjust(2, 2, 2, 1, 1, 1)
 
@@ -440,7 +581,7 @@ async def show_regions_menu(call: types.CallbackQuery):
 async def render_accounts_view(message_or_call, cat_key, r_key=None, custom_query=None, is_msg=False, force_refresh=False):
     target_msg = message_or_call if is_msg else message_or_call.message
     if is_msg:
-        wait_msg = await target_msg.answer("⏳ Fetching accounts... Please wait.")
+        wait_msg = await target_msg.answer("⏳ Fetching accounts... Please wait.", parse_mode=None)
     else:
         await safe_edit_text(target_msg, "⏳ Fetching accounts... Please wait.")
         wait_msg = target_msg
@@ -468,11 +609,11 @@ async def render_accounts_view(message_or_call, cat_key, r_key=None, custom_quer
                     sell_p = round(base_p * PROFIT_MULTIPLIER, 1)
                     new_b_text = re.sub(r"₹\s*\d+(?:\.\d+)?", f"₹{sell_p}", b_text)
                     kb.button(
-                        text=new_b_text,
+                        text=f"🟩 {new_b_text}",
                         callback_data=f"buybtn_{bot_msg.id}_{r_idx}_{b_idx}_{base_p}_{sell_p}_{cat_key}"
                     )
                 elif "next" in b_text.lower() or "➡️" in b_text or ("⬅️" in b_text and "back" not in b_text.lower()):
-                    kb.button(text=b_text, callback_data=f"page_{bot_msg.id}_{r_idx}_{b_idx}_{cat_key}")
+                    kb.button(text=f"🟦 {b_text}", callback_data=f"page_{bot_msg.id}_{r_idx}_{b_idx}_{cat_key}")
 
     if r_key:
         kb.button(text="🔄 Refresh", callback_data=f"reg_{cat_key}_{r_key}_1")
@@ -483,6 +624,9 @@ async def render_accounts_view(message_or_call, cat_key, r_key=None, custom_quer
 
 @dp.callback_query(F.data.startswith("reg_"))
 async def handle_region_click(call: types.CallbackQuery):
+    if not await is_user_joined(call.from_user.id):
+        await prompt_force_join_call(call)
+        return
     parts = call.data.split("_")
     cat_key, r_key = parts[1], parts[2]
     force_ref = (len(parts) > 3 and parts[3] == "1")
@@ -512,11 +656,11 @@ async def handle_pagination(call: types.CallbackQuery):
                             sell_p = round(base_p * PROFIT_MULTIPLIER, 1)
                             new_b_text = re.sub(r"₹\s*\d+(?:\.\d+)?", f"₹{sell_p}", b_text)
                             kb.button(
-                                text=new_b_text,
+                                text=f"🟩 {new_b_text}",
                                 callback_data=f"buybtn_{msg.id}_{r_i}_{b_i}_{base_p}_{sell_p}_{cat_key}"
                             )
                         elif "next" in b_text.lower() or "➡️" in b_text:
-                            kb.button(text=b_text, callback_data=f"page_{msg.id}_{r_i}_{b_i}_{cat_key}")
+                            kb.button(text=f"🟦 {b_text}", callback_data=f"page_{msg.id}_{r_i}_{b_i}_{cat_key}")
                 kb.button(text="⬅️ Back", callback_data=f"cat_{cat_key}")
                 kb.adjust(1)
                 raw_t = sanitize_for_customer(msg.raw_text or msg.text or "", multiply_price=True)
@@ -537,7 +681,7 @@ async def prompt_search_country(call: types.CallbackQuery):
         reply_markup=kb.as_markup()
     )
 
-# ==================== 10. STEALTH AUTO BUY ACCOUNT ====================
+# ==================== 12. STEALTH AUTO BUY ACCOUNT ====================
 @dp.callback_query(F.data.startswith("buybtn_"))
 async def buy_specific_account(call: types.CallbackQuery):
     _, msg_id_str, r_idx_str, b_idx_str, base_str, sell_str, cat_key = call.data.split("_")
@@ -604,14 +748,14 @@ async def buy_specific_account(call: types.CallbackQuery):
         clean_text = sanitize_for_customer(clean_text, multiply_price=False)
 
         kb = InlineKeyboardBuilder()
-        kb.button(text="🔑 Get OTP", callback_data=f"otp_{item_id}")
-        kb.button(text="🚪 Logout Session", callback_data=f"logout_{item_id}")
+        kb.button(text="🟩 Get OTP", callback_data=f"otp_{item_id}")
+        kb.button(text="🟥 Logout Session", callback_data=f"logout_{item_id}")
         kb.button(text="⬅️ Back to Store", callback_data="menu_tg_acc")
         kb.adjust(2, 1)
 
         await safe_edit_text(
             call.message,
-            f"✅ Purchase Successful!\n\n{clean_text}\n\n📌 Step 1: Telegram mein {phone} login karein.\n📌 Step 2: Niche 🔑 Get OTP dabayein.",
+            f"✅ Purchase Successful!\n\n{clean_text}\n\n📌 Step 1: Telegram mein {phone} login karein.\n📌 Step 2: Niche 🟩 Get OTP dabayein.",
             reply_markup=kb.as_markup()
         )
 
@@ -620,7 +764,8 @@ async def buy_specific_account(call: types.CallbackQuery):
             try:
                 await bot.send_message(
                     adm_id,
-                    f"✅ New Sale!\n📱 Phone: {phone}\n💵 Paid: ₹{sell_price}\n💰 Profit: ₹{profit}"
+                    f"✅ New Sale!\n📱 Phone: {phone}\n💵 Paid: ₹{sell_price}\n💰 Profit: ₹{profit}",
+                    parse_mode=None
                 )
             except Exception:
                 pass
@@ -637,11 +782,11 @@ async def buy_specific_account(call: types.CallbackQuery):
         if admin_secret_error:
             for adm_id in ADMIN_IDS:
                 try:
-                    await bot.send_message(adm_id, f"🔔 [PRIVATE ADMIN ALERT]\n{admin_secret_error}")
+                    await bot.send_message(adm_id, f"🔔 [PRIVATE ADMIN ALERT]\n{admin_secret_error}", parse_mode=None)
                 except Exception:
                     pass
 
-# ==================== 11. OTP, WALLET & QR DEPOSIT ====================
+# ==================== 13. OTP, WALLET & QR DEPOSIT ====================
 @dp.callback_query(F.data.startswith("otp_"))
 async def fetch_otp_code(call: types.CallbackQuery):
     item_id = call.data.split("_")[1]
@@ -656,7 +801,7 @@ async def fetch_otp_code(call: types.CallbackQuery):
             resp_text = sanitize_for_customer(otp_resp.raw_text or otp_resp.text or "")
             await call.message.reply(f"📩 OTP Status (#{item_id}):\n\n{resp_text}", parse_mode=None)
     except Exception:
-        await call.message.reply("⏳ Abhi OTP nahi aaya hai. 5 second baad firse try karein.")
+        await call.message.reply("⏳ Abhi OTP nahi aaya hai. 5 second baad firse try karein.", parse_mode=None)
 
 @dp.callback_query(F.data.startswith("logout_"))
 async def logout_session_cb(call: types.CallbackQuery):
@@ -672,7 +817,7 @@ async def logout_session_cb(call: types.CallbackQuery):
             resp_text = sanitize_for_customer(resp.raw_text or resp.text or "")
             await call.message.reply(f"🚪 Session Status (#{item_id}):\n\n{resp_text}", parse_mode=None)
     except Exception:
-        await call.message.reply("⚠️ Logout failed.")
+        await call.message.reply("⚠️ Logout failed.", parse_mode=None)
 
 @dp.callback_query(F.data == "my_orders")
 async def my_orders_cb(call: types.CallbackQuery):
@@ -685,7 +830,7 @@ async def my_orders_cb(call: types.CallbackQuery):
         text = "📦 Your Recent Orders:\n\n"
         for item_id, phone, price in rows:
             text += f"• #{item_id} — {phone} (₹{price})\n"
-            kb.button(text=f"🔑 OTP #{item_id}", callback_data=f"otp_{item_id}")
+            kb.button(text=f"🟩 OTP #{item_id}", callback_data=f"otp_{item_id}")
     kb.button(text="⬅️ Back", callback_data="back_home")
     kb.adjust(1)
     await safe_edit_text(call.message, text, reply_markup=kb.as_markup())
@@ -694,7 +839,7 @@ async def my_orders_cb(call: types.CallbackQuery):
 async def my_wallet_cb(call: types.CallbackQuery):
     bal = get_balance(call.from_user.id)
     kb = InlineKeyboardBuilder()
-    kb.button(text="➕ Deposit Funds", callback_data="deposit")
+    kb.button(text="🟨 Deposit Funds", callback_data="deposit")
     kb.button(text="⬅️ Back", callback_data="back_home")
     kb.adjust(1)
     await safe_edit_text(
@@ -720,11 +865,11 @@ async def send_qr_screen(target_msg, user_id: int, amount: float, is_callback=Tr
     )
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="₹50 QR", callback_data="qramt_50")
-    kb.button(text="₹100 QR", callback_data="qramt_100")
-    kb.button(text="₹200 QR", callback_data="qramt_200")
-    kb.button(text="₹500 QR", callback_data="qramt_500")
-    kb.button(text="✏️ Custom Amount", callback_data="qramt_custom")
+    kb.button(text="🟦 ₹50 QR", callback_data="qramt_50")
+    kb.button(text="🟩 ₹100 QR", callback_data="qramt_100")
+    kb.button(text="🟨 ₹200 QR", callback_data="qramt_200")
+    kb.button(text="🟪 ₹500 QR", callback_data="qramt_500")
+    kb.button(text="🔵 Custom Amount", callback_data="qramt_custom")
     kb.button(text="⬅️ Back to Menu", callback_data="back_home")
     kb.adjust(2, 2, 1, 1)
 
@@ -737,7 +882,8 @@ async def send_qr_screen(target_msg, user_id: int, amount: float, is_callback=Tr
         chat_id=user_id,
         photo=qr_file,
         caption=caption,
-        reply_markup=kb.as_markup()
+        reply_markup=kb.as_markup(),
+        parse_mode=None
     )
 
 @dp.callback_query(F.data == "deposit")
@@ -754,9 +900,9 @@ async def change_qr_amount(call: types.CallbackQuery):
         kb.button(text="⬅️ Back", callback_data="deposit")
         if call.message.photo:
             await call.message.delete()
-            await call.message.answer("✏️ Enter Custom Amount: Type amount (e.g. 39, 150):", reply_markup=kb.as_markup())
+            await call.message.answer("🔵 Enter Custom Amount: Type amount (e.g. 39, 150):", reply_markup=kb.as_markup(), parse_mode=None)
         else:
-            await safe_edit_text(call.message, "✏️ Enter Custom Amount: Type amount (e.g. 39, 150):", reply_markup=kb.as_markup())
+            await safe_edit_text(call.message, "🔵 Enter Custom Amount: Type amount (e.g. 39, 150):", reply_markup=kb.as_markup())
         return
 
     amount = float(val)
@@ -766,6 +912,7 @@ async def change_qr_amount(call: types.CallbackQuery):
 @dp.message(F.text & ~F.text.startswith("/"))
 async def handle_text_inputs(msg: types.Message):
     user_id = msg.from_user.id
+    ensure_user(user_id)
     if user_id in deposit_custom_state:
         deposit_custom_state.discard(user_id)
         try:
@@ -774,7 +921,7 @@ async def handle_text_inputs(msg: types.Message):
                 raise ValueError()
             await send_qr_screen(msg, user_id, amount=amt, is_callback=False)
         except ValueError:
-            await msg.reply("❌ Valid number daalein (Jaise: 39 ya 100).")
+            await msg.reply("❌ Valid number daalein (Jaise: 39 ya 100).", parse_mode=None)
         return
 
     if user_id in search_state:
@@ -788,19 +935,20 @@ async def support_cb(call: types.CallbackQuery):
     kb.button(text="⬅️ Back", callback_data="back_home")
     await safe_edit_text(call.message, f"🆘 Support: {SUPPORT_USERNAME}", reply_markup=kb.as_markup())
 
-# ==================== 12. ADMIN SCREENSHOT APPROVAL HANDLER ====================
+# ==================== 14. ADMIN SCREENSHOT APPROVAL HANDLER ====================
 @dp.message(F.photo | F.document)
 async def handle_payment_screenshot(msg: types.Message):
     user_id = msg.from_user.id
+    ensure_user(user_id)
     req_amt = pending_deposit_amt.get(user_id, 100.0)
 
-    await msg.reply(f"✅ Screenshot submitted! Expected: ₹{req_amt}. Waiting for admin approval...")
+    await msg.reply(f"✅ Screenshot submitted! Expected: ₹{req_amt}. Waiting for admin approval...", parse_mode=None)
 
     kb = InlineKeyboardBuilder()
-    kb.button(text=f"✅ Approve ₹{req_amt}", callback_data=f"admdep_ok_{user_id}_{req_amt}")
-    kb.button(text="✅ Approve ₹50", callback_data=f"admdep_ok_{user_id}_50")
-    kb.button(text="✅ Approve ₹100", callback_data=f"admdep_ok_{user_id}_100")
-    kb.button(text="❌ Reject", callback_data=f"admdep_no_{user_id}_0")
+    kb.button(text=f"🟩 Approve ₹{req_amt}", callback_data=f"admdep_ok_{user_id}_{req_amt}")
+    kb.button(text="🟩 Approve ₹50", callback_data=f"admdep_ok_{user_id}_50")
+    kb.button(text="🟩 Approve ₹100", callback_data=f"admdep_ok_{user_id}_100")
+    kb.button(text="🟥 Reject", callback_data=f"admdep_no_{user_id}_0")
     kb.adjust(1, 2, 1)
 
     user_name = msg.from_user.full_name or "Customer"
@@ -856,7 +1004,7 @@ async def admin_approve_reject_cb(call: types.CallbackQuery):
         except Exception:
             pass
 
-        await bot.send_message(uid, f"🎉 Deposit Approved!\n💵 Added: ₹{amt}\n💰 New Wallet Balance: ₹{new_bal}")
+        await bot.send_message(uid, f"🎉 Deposit Approved!\n💵 Added: ₹{amt}\n💰 New Wallet Balance: ₹{new_bal}", parse_mode=None)
         await call.answer(f"✅ Approved ₹{amt}!")
     else:
         old_text = call.message.caption or call.message.text or ""
@@ -869,7 +1017,7 @@ async def admin_approve_reject_cb(call: types.CallbackQuery):
         except Exception:
             pass
 
-        await bot.send_message(uid, "❌ Your payment screenshot was rejected by Admin.")
+        await bot.send_message(uid, "❌ Your payment screenshot was rejected by Admin.", parse_mode=None)
         await call.answer("❌ Rejected!")
 
 @dp.message(Command("addbal"))
@@ -880,12 +1028,12 @@ async def admin_add_balance(msg: types.Message):
         _, uid, amt = msg.text.split()
         update_balance(int(uid), float(amt))
         new_bal = get_balance(int(uid))
-        await msg.reply(f"✅ Added ₹{amt} to {uid}! (New Balance: ₹{new_bal})")
-        await bot.send_message(int(uid), f"✅ Deposit Approved!\nAdded: ₹{amt}\nNew Wallet Balance: ₹{new_bal}")
+        await msg.reply(f"✅ Added ₹{amt} to {uid}! (New Balance: ₹{new_bal})", parse_mode=None)
+        await bot.send_message(int(uid), f"✅ Deposit Approved!\nAdded: ₹{amt}\nNew Wallet Balance: ₹{new_bal}", parse_mode=None)
     except Exception:
-        await msg.reply("❌ Usage: /addbal USER_ID AMOUNT")
+        await msg.reply("❌ Usage: /addbal USER_ID AMOUNT", parse_mode=None)
 
-# ==================== 13. RENDER 24/7 KEEP-ALIVE & ANTI-HIJACK GUARD ====================
+# ==================== 15. RENDER 24/7 KEEP-ALIVE & ANTI-HIJACK GUARD ====================
 async def health_check(request):
     return web.Response(text="✅ TG Shop Store is Active 24/7!")
 
