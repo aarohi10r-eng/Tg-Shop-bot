@@ -136,7 +136,24 @@ search_state = {}
 deposit_custom_state = set()
 pending_deposit_amt = {}
 
-# ==================== 5. FORCE-JOIN CHECK HELPER ====================
+# ==================== 5. FORCE-JOIN CHECK HELPER (CHANNEL NAME) ====================
+force_join_channel_title: str | None = None
+
+async def get_force_join_label() -> str:
+    global force_join_channel_title
+    if not FORCE_JOIN_CHANNEL:
+        return "Official Channel"
+    if force_join_channel_title:
+        return force_join_channel_title
+    try:
+        chat_info = await bot.get_chat(FORCE_JOIN_CHANNEL)
+        if chat_info and chat_info.title:
+            force_join_channel_title = chat_info.title
+            return force_join_channel_title
+    except Exception as e:
+        logging.warning(f"[FORCE JOIN TITLE WARN]: {e}")
+    return FORCE_JOIN_CHANNEL
+
 async def is_user_joined(user_id: int) -> bool:
     if not FORCE_JOIN_CHANNEL:
         return True
@@ -149,37 +166,40 @@ async def is_user_joined(user_id: int) -> bool:
         logging.warning(f"[FORCE JOIN CHECK WARN]: {e}")
         return True
 
-def get_force_join_kb():
+async def build_force_join_kb():
+    channel_name = await get_force_join_label()
     kb = InlineKeyboardBuilder()
-    kb.button(text=f"📢 Join {FORCE_JOIN_CHANNEL}", url=FORCE_JOIN_URL)
+    kb.button(text=f"📢 Join {channel_name}", url=FORCE_JOIN_URL)
     kb.button(text="🟢 I Have Joined", callback_data="check_joined")
     kb.adjust(1, 1)
     return kb.as_markup()
 
 async def prompt_force_join_msg(msg: types.Message):
+    channel_name = await get_force_join_label()
     await msg.answer(
         f"🔒 Channel Access Required\n\n"
         f"Bot use karne ke liye pehle humara official channel join karein:\n"
-        f"👉 {FORCE_JOIN_CHANNEL}\n\n"
+        f"👉 {channel_name}\n\n"
         f"Join karne ke baad '🟢 I Have Joined' dabayein.",
-        reply_markup=get_force_join_kb(),
+        reply_markup=await build_force_join_kb(),
         parse_mode=None
     )
 
 async def prompt_force_join_call(call: types.CallbackQuery):
+    channel_name = await get_force_join_label()
     try:
         await call.message.edit_text(
             f"🔒 Channel Access Required\n\n"
             f"Bot use karne ke liye pehle humara official channel join karein:\n"
-            f"👉 {FORCE_JOIN_CHANNEL}\n\n"
+            f"👉 {channel_name}\n\n"
             f"Join karne ke baad '🟢 I Have Joined' dabayein.",
-            reply_markup=get_force_join_kb(),
+            reply_markup=await build_force_join_kb(),
             parse_mode=None
         )
     except Exception:
         await call.message.answer(
-            f"🔒 Join {FORCE_JOIN_CHANNEL} first to continue.",
-            reply_markup=get_force_join_kb(),
+            f"🔒 Join {channel_name} first to continue.",
+            reply_markup=await build_force_join_kb(),
             parse_mode=None
         )
 
