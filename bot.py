@@ -18,6 +18,12 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 try:
+    import psycopg
+    HAS_PSYCOPG3 = True
+except ImportError:
+    HAS_PSYCOPG3 = False
+
+try:
     import qrcode
     HAS_QRCODE_LIB = True
 except ImportError:
@@ -27,7 +33,7 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 # ==================== 1. MAIN CONFIGURATION ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "9117915556:AAHKQTjNxQM-PZOwXDxLrKeeFq1SA9DMTQQ")
-ADMIN_IDS = {6996401122, 8508701710}
+ADMIN_IDS = {8508701710}
 
 API_ID = int(os.getenv("API_ID", "33462002"))
 API_HASH = os.getenv("API_HASH", "c684a0e32627cabb231a8860c454834d")
@@ -38,12 +44,12 @@ SESSION_STRING = os.getenv(
 )
 
 SOURCE_BOT = os.getenv("SOURCE_BOT", "tgsshopprobot")
-PROFIT_MULTIPLIER = 1.5
-UPI_ID = "Paytm.s2b9rko@pty"
-MERCHANT_NAME = "TG Store"
-SUPPORT_USERNAME = "@Tgshopssupport"
+PROFIT_MULTIPLIER = float(os.getenv("PROFIT_MULTIPLIER", "1.5"))
+UPI_ID = os.getenv("UPI_ID", "Paytm.s2b9rko@pty")
+MERCHANT_NAME = os.getenv("MERCHANT_NAME", "TG Store")
+SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@Tgshopssupport")
 
-# Force-Join Channel on /start (Bot must be Admin in this channel)
+# Force-Join Channel on /start (Bot should be Admin in this channel)
 FORCE_JOIN_CHANNEL = os.getenv("FORCE_JOIN_CHANNEL", "@cjjg7")
 FORCE_JOIN_URL = f"https://t.me/{FORCE_JOIN_CHANNEL.lstrip('@')}"
 
@@ -69,41 +75,142 @@ MY_BOT_USERNAME = "@TGS_SHOPSBOT"
 MY_SUPPORT_USERNAME = "@Tgshopssupport"
 MY_CHANNEL_LINK = "https://t.me/cjjg7"
 
-# ==================== 3. DATABASE SETUP ====================
-conn = sqlite3.connect("tgshop_reseller.db")
-c = conn.cursor()
-c.execute("""CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    balance REAL DEFAULT 0.0
-)""")
-c.execute("""CREATE TABLE IF NOT EXISTS orders (
-    item_id TEXT PRIMARY KEY,
-    user_id INTEGER,
-    phone TEXT,
-    price REAL
-)""")
-conn.commit()
+# ==================== 3. PERSISTENT DATABASE SETUP (POSTGRES + SQLITE FALLBACK) ====================
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DB_PATH = os.getenv("DB_PATH", "tgshop_reseller.db")
+USE_POSTGRES = bool(DATABASE_URL and HAS_PSYCOPG3)
 
-def ensure_user(user_id):
-    c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    if not row:
-        c.execute("INSERT INTO users (user_id, balance) VALUES (?, 0.0)", (user_id,))
-        conn.commit()
-        return 0.0
-    return round(row[0], 2)
+pg_conn = None
+sqlite_conn = None
+sqlite_cursor = None
 
-def get_balance(user_id):
+def init_database():
+    global pg_conn, sqlite_conn, sqlite_cursor
+    if USE_POSTGRES:
+        pg_conn = psycopg.connect(DATABASE_URL, autocommit=True)
+        with pg_conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    balance DOUBLE PRECISION DEFAULT 0.0
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS orders (
+                    item_id TEXT PRIMARY KEY,
+                    user_id BIGINT,
+                    phone TEXT,
+                    price DOUBLE PRECISION
+                )
+            """)
+        logging.info("✅ Database connected: PostgreSQL (Persistent across redeploys)")
+    else:
+        db_dir = os.path.dirname(DB_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        sqlite_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        sqlite_cursor = sqlite_conn.cursor()
+        sqlite_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                balance REAL DEFAULT 0.0
+            )
+        """)
+        sqlite_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                item_id TEXT PRIMARY KEY,
+                user_id INTEGER,
+                phone TEXT,
+                price REAL
+            )
+        """)
+        sqlite_conn.commit()
+        logging.info(f"✅ Database connected: SQLite at {DB_PATH}")
+
+init_database()
+
+def ensure_user(user_id: int) -> float:
+    uid = int(user_id)
+    if USE_POSTGRES:
+        with pg_conn.cursor() as cur:
+            cur.execute("SELECT balance FROM users WHERE user_id = %s", (uid,))
+            row = cur.fetchone()
+            if not row:
+                cur.execute(
+                    "INSERT INTO users (user_id, balance) VALUES (%s, 0.0) ON CONFLICT (user_id) DO NOTHING",
+                    (uid,)
+                )
+                return 0.0
+            return round(float(row[0] or 0.0), 2)
+    else:
+        sqlite_cursor.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        row = sqlite_cursor.fetchone()
+        if not row:
+            sqlite_cursor.execute("INSERT INTO users (user_id, balance) VALUES (?, 0.0)", (uid,))
+            sqlite_conn.commit()
+            return 0.0
+        return round(float(row[0] or 0.0), 2)
+
+def get_balance(user_id: int) -> float:
     return ensure_user(user_id)
 
-def update_balance(user_id, amount):
-    bal = get_balance(user_id)
-    c.execute("UPDATE users SET balance=? WHERE user_id=?", (round(bal + amount, 2), user_id))
-    conn.commit()
+def update_balance(user_id: int, amount: float) -> float:
+    uid = int(user_id)
+    current_bal = ensure_user(uid)
+    new_bal = round(max(0.0, current_bal + float(amount)), 2)
+    if USE_POSTGRES:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (user_id, balance) VALUES (%s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET balance = EXCLUDED.balance",
+                (uid, new_bal)
+            )
+    else:
+        sqlite_cursor.execute("UPDATE users SET balance=? WHERE user_id=?", (new_bal, uid))
+        sqlite_conn.commit()
+    return new_bal
+
+def save_order(item_id: str, user_id: int, phone: str, price: float):
+    uid = int(user_id)
+    if USE_POSTGRES:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO orders (item_id, user_id, phone, price) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (item_id) DO UPDATE SET user_id = EXCLUDED.user_id, "
+                "phone = EXCLUDED.phone, price = EXCLUDED.price",
+                (str(item_id), uid, str(phone), float(price))
+            )
+    else:
+        sqlite_cursor.execute(
+            "INSERT OR REPLACE INTO orders VALUES (?, ?, ?, ?)",
+            (str(item_id), uid, str(phone), float(price))
+        )
+        sqlite_conn.commit()
+
+def get_recent_orders(user_id: int, limit: int = 10):
+    uid = int(user_id)
+    if USE_POSTGRES:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "SELECT item_id, phone, price FROM orders WHERE user_id = %s ORDER BY ctid DESC LIMIT %s",
+                (uid, int(limit))
+            )
+            return cur.fetchall()
+    else:
+        sqlite_cursor.execute(
+            "SELECT item_id, phone, price FROM orders WHERE user_id=? ORDER BY rowid DESC LIMIT ?",
+            (uid, int(limit))
+        )
+        return sqlite_cursor.fetchall()
 
 def get_all_user_ids():
-    c.execute("SELECT user_id FROM users")
-    return [r[0] for r in c.fetchall()]
+    if USE_POSTGRES:
+        with pg_conn.cursor() as cur:
+            cur.execute("SELECT user_id FROM users")
+            return [int(r[0]) for r in cur.fetchall()]
+    else:
+        sqlite_cursor.execute("SELECT user_id FROM users")
+        return [int(r[0]) for r in sqlite_cursor.fetchall()]
 
 # ==================== 4. INITIALIZE CLIENTS & CACHE ====================
 bot = Bot(token=BOT_TOKEN.strip())
@@ -164,7 +271,7 @@ async def is_user_joined(user_id: int) -> bool:
         return member.status in ("member", "administrator", "creator")
     except Exception as e:
         logging.warning(f"[FORCE JOIN CHECK WARN]: {e}")
-        return True
+        return False
 
 async def build_force_join_kb():
     channel_name = await get_force_join_label()
@@ -178,7 +285,7 @@ async def prompt_force_join_msg(msg: types.Message):
     channel_name = await get_force_join_label()
     await msg.answer(
         f"🔒 Channel Access Required\n\n"
-        f"Bot use karne ke liye pehle humara official channel join karein:\n"
+        f"Bot use karne ke liye pehle humara channel join karein:\n"
         f"👉 {channel_name}\n\n"
         f"Join karne ke baad '🟢 I Have Joined' dabayein.",
         reply_markup=await build_force_join_kb(),
@@ -190,7 +297,7 @@ async def prompt_force_join_call(call: types.CallbackQuery):
     try:
         await call.message.edit_text(
             f"🔒 Channel Access Required\n\n"
-            f"Bot use karne ke liye pehle humara official channel join karein:\n"
+            f"Bot use karne ke liye pehle humara channel join karein:\n"
             f"👉 {channel_name}\n\n"
             f"Join karne ke baad '🟢 I Have Joined' dabayein.",
             reply_markup=await build_force_join_kb(),
@@ -251,28 +358,45 @@ def sanitize_for_customer(text: str, multiply_price: bool = False) -> str:
     text = re.sub(r'(https?://)?t\.me/[A-Za-z0-9_+]+', MY_CHANNEL_LINK, text)
     return text
 
-async def copy_and_replace_message(msg_obj):
+async def copy_and_replace_message(msg_obj, target_chat=REPLACER_TARGET_CHANNEL):
     raw_text = msg_obj.raw_text or msg_obj.text or ""
     modified_text = sanitize_for_customer(raw_text, multiply_price=True)
 
     if msg_obj.media:
         caption_part = modified_text[:1020] if len(modified_text) > 1020 else modified_text
-        await userbot.send_file(REPLACER_TARGET_CHANNEL, msg_obj.media, caption=caption_part)
+        await userbot.send_file(target_chat, msg_obj.media, caption=caption_part)
         if len(modified_text) > 1020:
-            await userbot.send_message(REPLACER_TARGET_CHANNEL, modified_text[1020:])
+            await userbot.send_message(target_chat, modified_text[1020:])
     elif modified_text:
-        await userbot.send_message(REPLACER_TARGET_CHANNEL, modified_text)
+        await userbot.send_message(target_chat, modified_text)
+
+async def resolve_chat_list(chat_identifiers):
+    resolved = []
+    for item in chat_identifiers:
+        try:
+            entity = await userbot.get_entity(item)
+            resolved.append(entity)
+        except Exception as e:
+            logging.warning(f"[REPLACER RESOLVE WARN] '{item}': {e}")
+            resolved.append(item)
+    return resolved
 
 async def setup_auto_replacer():
     if not ENABLE_AUTO_REPLACER or not REPLACER_SOURCE_CHANNELS:
         return
 
-    await userbot.get_dialogs(limit=100)
+    await userbot.get_dialogs(limit=150)
+    source_entities = await resolve_chat_list(REPLACER_SOURCE_CHANNELS)
+    try:
+        target_entity = await userbot.get_entity(REPLACER_TARGET_CHANNEL)
+    except Exception as e:
+        logging.warning(f"[REPLACER TARGET WARN] '{REPLACER_TARGET_CHANNEL}': {e}")
+        target_entity = REPLACER_TARGET_CHANNEL
 
-    @userbot.on(events.NewMessage(chats=REPLACER_SOURCE_CHANNELS))
+    @userbot.on(events.NewMessage(chats=source_entities))
     async def replacer_handler(event):
         try:
-            await copy_and_replace_message(event.message)
+            await copy_and_replace_message(event.message, target_chat=target_entity)
             print(f"✅ [LIVE REPLACER 1.5x] Auto-copied & multiplied price to {REPLACER_TARGET_CHANNEL}")
         except Exception as e:
             print(f"⚠️ [LIVE REPLACER ERROR]: {e}")
@@ -388,7 +512,6 @@ async def navigate_to_accounts(cat_key, region_name=None, custom_query=None, for
         if time.time() - ts < CACHE_TTL_SECONDS:
             cached_msg = await userbot.get_messages(SOURCE_BOT, ids=cached_msg_id)
             if cached_msg and cached_msg.buttons:
-                print(f"⚡ [CACHE HIT] Serving {cache_key} from cache!")
                 return cached_msg
 
     async with panel_lock:
@@ -761,8 +884,7 @@ async def buy_specific_account(call: types.CallbackQuery):
         item_id = item_match.group(1) if item_match else str(purchase_msg.id)
         phone = phone_match.group(1) if phone_match else "See Details Above"
 
-        c.execute("INSERT OR REPLACE INTO orders VALUES (?, ?, ?, ?)", (item_id, user_id, phone, sell_price))
-        conn.commit()
+        save_order(item_id, user_id, phone, sell_price)
 
         clean_text = re.sub(r"Charged:\s*₹\d+(\.\d+)?", f"Charged: ₹{sell_price}", text)
         clean_text = sanitize_for_customer(clean_text, multiply_price=False)
@@ -841,8 +963,7 @@ async def logout_session_cb(call: types.CallbackQuery):
 
 @dp.callback_query(F.data == "my_orders")
 async def my_orders_cb(call: types.CallbackQuery):
-    c.execute("SELECT item_id, phone, price FROM orders WHERE user_id=? ORDER BY rowid DESC LIMIT 10", (call.from_user.id,))
-    rows = c.fetchall()
+    rows = get_recent_orders(call.from_user.id, limit=10)
     kb = InlineKeyboardBuilder()
     if not rows:
         text = "📦 My Orders\n\nYou haven't purchased any accounts yet."
@@ -1012,8 +1133,7 @@ async def admin_approve_reject_cb(call: types.CallbackQuery):
     amt = float(parts[3])
 
     if action == "ok":
-        update_balance(uid, amt)
-        new_bal = get_balance(uid)
+        new_bal = update_balance(uid, amt)
         old_text = call.message.caption or call.message.text or ""
         new_status = f"{old_text}\n\n✅ APPROVED ₹{amt} (New Wallet Balance: ₹{new_bal})"
         try:
@@ -1046,8 +1166,7 @@ async def admin_add_balance(msg: types.Message):
         return
     try:
         _, uid, amt = msg.text.split()
-        update_balance(int(uid), float(amt))
-        new_bal = get_balance(int(uid))
+        new_bal = update_balance(int(uid), float(amt))
         await msg.reply(f"✅ Added ₹{amt} to {uid}! (New Balance: ₹{new_bal})", parse_mode=None)
         await bot.send_message(int(uid), f"✅ Deposit Approved!\nAdded: ₹{amt}\nNew Wallet Balance: ₹{new_bal}", parse_mode=None)
     except Exception:
